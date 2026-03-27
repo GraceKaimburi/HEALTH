@@ -69,7 +69,6 @@ st.title('Longitudinal Risk Explorer')
 theme_choice = st.radio('Theme:', ['Dark', 'Light'], index=0 if st.session_state['theme'] == 'Dark' else 1, horizontal=True)
 if theme_choice != st.session_state['theme']:
     st.session_state['theme'] = theme_choice
-    st.experimental_rerun()
 
 if st.session_state['theme'] == 'Dark':
     st.markdown('<style>body {background-color: #0E1117; color: white; margin-top: 8px;}</style>', unsafe_allow_html=True)
@@ -189,16 +188,13 @@ if st.session_state['enrollment_mode']:
                     })
                     st.session_state['enrollment_mode'] = False
                     st.success(f'✅ Patient {enroll_name} enrolled successfully!')
-                    st.experimental_rerun()
+                    # Streamlit reruns automatically on user actions, explicit rerun removed
         
         with save_col2:
             if st.button('❌ Cancel', use_container_width=True):
                 st.session_state['enrollment_mode'] = False
                 st.info('Enrollment cancelled.')
-                st.experimental_rerun()
-
-else:
-    layout_left, layout_main = st.columns([1, 3], gap='large')
+                # Streamlit reruns automatically on user actions, explicit rerun removed
     
     with layout_left:
         st.subheader('Doctor dashboard')
