@@ -1,6 +1,8 @@
 import streamlit as st
+from streamlit import st_autorefresh
 import numpy as np
 import pandas as pd
+import altair as alt
 import joblib
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
@@ -234,13 +236,13 @@ else:  # Dashboard page
     if theme_choice != st.session_state['theme']:
         st.session_state['theme'] = theme_choice
 
-    # Unified top spacing and container responsiveness
+    # More gentle top spacing (not too compressed) and consistent layout
     st.markdown("""
     <style>
-    .block-container {padding-top: 0.5rem !important; margin-top: 0 !important;}
-    .stSidebar {padding-top: 0.75rem !important;}
-    .css-1d391kg, .css-1v3fvcr, .css-hxt7ib {padding-top: 0 !important;}
-    .css-1d391kg, .css-1v3fvcr, .css-hxt7ib {margin-top: 0 !important;}
+    .block-container {padding-top: 1rem !important; margin-top: 0 !important;}
+    .stSidebar {padding-top: 1rem !important; margin-top: 0 !important;}
+    .css-1d391kg, .css-1v3fvcr, .css-hxt7ib, .css-18e3th9 {padding-top: 0 !important; margin-top: 0 !important;}
+    .stSelectbox>div>div>div, .stTextInput>div>div>input {border-radius: 0.5rem !important;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -433,7 +435,62 @@ else:  # Dashboard page
             st.stop()
         
         st.subheader(f"Patient: {selected_patient['name']}")
-        
+
+        if 'carousel_page' not in st.session_state:
+            st.session_state['carousel_page'] = 0
+        if 'carousel_auto_rotate' not in st.session_state:
+            st.session_state['carousel_auto_rotate'] = True
+
+        carousel_action = st.radio('Chart view', ['Diagnostics trend', 'Risk trend'], index=st.session_state['carousel_page'], horizontal=True)
+        st.session_state['carousel_page'] = 0 if carousel_action == 'Diagnostics trend' else 1
+
+        rotate_col1, rotate_col2, rotate_col3 = st.columns([1, 1, 1])
+        with rotate_col1:
+            if st.button('◀ Prev', key='carousel_prev'):
+                st.session_state['carousel_page'] = (st.session_state['carousel_page'] - 1) % 2
+        with rotate_col2:
+            st.session_state['carousel_auto_rotate'] = st.checkbox('Auto rotate (5 sec)', value=st.session_state['carousel_auto_rotate'], key='carousel_auto')
+        with rotate_col3:
+            if st.button('Next ▶', key='carousel_next'):
+                st.session_state['carousel_page'] = (st.session_state['carousel_page'] + 1) % 2
+
+        if st.session_state['carousel_auto_rotate']:
+            refresh_count = st_autorefresh(interval=5000, key='carousel_timer')
+            # Use refresh count to update page
+            if refresh_count > 0:
+                st.session_state['carousel_page'] = (st.session_state['carousel_page'] + 1) % 2
+
+        visits_df = pd.DataFrame([{
+            'visit': v.get('label', f"Visit {i+1}"),
+            'sbp': v.get('sbp', None),
+            'dbp': v.get('dbp', None),
+            'risk': v.get('risk', 0.0)
+        } for i, v in enumerate(selected_patient.get('visits', []))])
+
+        if st.session_state['carousel_page'] == 0:
+            st.markdown('### Diagnostics Trend (SBP/DBP)')
+            if not visits_df.empty:
+                chart = alt.Chart(visits_df.melt(id_vars=['visit'], value_vars=['sbp', 'dbp'], var_name='measurement', value_name='value')).mark_line(point=True).encode(
+                    x='visit',
+                    y='value',
+                    color='measurement',
+                    tooltip=['visit', 'measurement', 'value']
+                ).properties(width=600, height=300)
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.warning('No visit data yet for diagnostics trend.')
+        else:
+            st.markdown('### Risk Trend')
+            if not visits_df.empty:
+                chart = alt.Chart(visits_df).mark_line(point=True, color='orange').encode(
+                    x='visit',
+                    y='risk',
+                    tooltip=['visit', alt.Tooltip('risk', format='.2f')]
+                ).properties(width=600, height=300)
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.warning('No visit data yet for risk trend.')
+
         visit_labels = [v.get('label', f"Visit {i+1}") for i, v in enumerate(selected_patient.get('visits', []))]
         if not visit_labels:
             st.warning('No visits available. Enter at least one visit first.')
