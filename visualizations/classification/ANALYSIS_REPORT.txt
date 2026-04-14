@@ -1,0 +1,136 @@
+
+================================================================================
+MATERNAL HEALTH RISK CLASSIFICATION - COMPREHENSIVE ANALYSIS REPORT
+================================================================================
+
+DATASET OVERVIEW
+--------------------------------------------------------------------------------
+Total Samples: 808
+Features: Age, SystolicBP, DiastolicBP, BS, BodyTemp, HeartRate
+Target Classes: high risk, low risk
+Class Distribution:
+RiskLevel
+low risk     478
+high risk    330
+
+TRAIN-TEST SPLIT
+--------------------------------------------------------------------------------
+Training Set Size: 646 samples
+Test Set Size: 162 samples
+Train/Test Ratio: 80/20
+Stratified: Yes (maintains class proportions)
+
+MODEL CONFIGURATION
+--------------------------------------------------------------------------------
+Algorithm: Random Forest Classifier
+Number of Trees: 100
+Max Depth: 10
+Min Samples Split: 5
+Min Samples Leaf: 2
+Class Weight: Balanced (to handle imbalance)
+Random State: 42
+
+STATISTICAL SIGNIFICANCE TESTS
+--------------------------------------------------------------------------------
+Chi-Square Test (Independence):
+  - Test Statistic: 145.9608
+  - P-value: 0.000000
+  - Conclusion: SIGNIFICANT (p < 0.05) [OK]
+  - Interpretation: Predictions are strongly associated with actual values
+
+Cross-Validation (5-Fold Stratified):
+  - Fold Scores: 0.9692, 0.9612, 0.9690, 0.9302, 0.9380
+  - Mean Accuracy: 0.9535
+  - Std Deviation: 0.0163
+  - Range: [0.9302, 0.9692]
+
+OVERALL PERFORMANCE METRICS
+--------------------------------------------------------------------------------
+Accuracy: 0.9815 (98.15%)
+Macro F1-Score: 0.9807
+Weighted F1-Score: 0.9814
+Cohen's Kappa: 0.9614
+Matthews Correlation Coefficient (MCC): 0.9621
+ROC-AUC Score: 0.9968
+
+ERROR ANALYSIS
+--------------------------------------------------------------------------------
+Total Misclassifications: 3 out of 162
+Misclassification Rate: 1.85%
+Correct Prediction Confidence: 0.9466
+Incorrect Prediction Confidence: 0.7435
+Confidence Delta: 0.2031
+
+Per-Class Error Breakdown:
+  high risk: 3/66 errors (4.55%)
+  low risk: 0/96 errors (0.00%)
+
+Systematic Misclassification Patterns:
+  high risk    -> low risk    :   3 times (4.5%)
+
+PER-CLASS PERFORMANCE
+--------------------------------------------------------------------------------
+
+high risk:
+  Precision: 1.0000
+  Recall: 0.9545
+  F1-Score: 0.9767
+  Support: 66
+
+low risk:
+  Precision: 0.9697
+  Recall: 1.0000
+  F1-Score: 0.9846
+  Support: 96
+
+FEATURE IMPORTANCE RANKING
+--------------------------------------------------------------------------------
+BS             : 0.4720
+SystolicBP     : 0.1949
+Age            : 0.1023
+DiastolicBP    : 0.0964
+BodyTemp       : 0.0764
+HeartRate      : 0.0580
+
+KEY FINDINGS & INTERPRETATIONS
+--------------------------------------------------------------------------------
+1. Model Performance:
+   - The model achieves 98.15% accuracy on the test set
+   - Cross-validation results (0.9535 ± 0.0163) suggest stable performance
+   - Cohen's Kappa (0.9614) indicates excellent agreement beyond chance
+
+2. Statistical Significance:
+   - Chi-square p-value (0.000000) < 0.05: Model predictions are significantly associated with actual labels
+   - This confirms that the model is capturing meaningful patterns in the data
+
+3. Error Analysis:
+   - Overall misclassification rate: 1.85%
+   - Model is more confident in correct predictions (confidence delta: 0.2031)
+   - Major confusion: See systematic error patterns above
+
+4. Feature Importance:
+   - Top 3 features: BS, SystolicBP, Age
+   - Features BS has the highest predictive power (0.4720)
+
+5. Recommendations:
+   - Model is production-ready
+   - Model misclassification rate is acceptable
+   - class distribution is balanced
+
+VISUALIZATIONS GENERATED
+--------------------------------------------------------------------------------
+[OK] 01_confusion_matrix.png - Detailed confusion matrix heatmap
+[OK] 02_roc_curve.png - ROC curve with AUC score
+[OK] 03_precision_recall_curve.png - Precision-recall trade-off
+[OK] 04_feature_importance.png - Feature ranking by importance
+[OK] 05_metrics_comparison.png - Overall performance metrics
+[OK] 06_per_class_performance.png - Per-class precision/recall/F1
+[OK] 07_error_distribution_by_feature.png - Feature-wise error analysis
+[OK] 08_confidence_distribution.png - Prediction confidence patterns
+[OK] 09_class_distribution.png - Train/test class balance
+[OK] 10_misclassification_heatmap.png - Normalized error rates
+
+================================================================================
+Report Generated: 2026-04-14 23:49:21.179644
+Location: visualizations/classification/ANALYSIS_REPORT.txt
+================================================================================

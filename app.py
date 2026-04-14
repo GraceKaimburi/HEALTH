@@ -1,11 +1,13 @@
 import streamlit as st
-from streamlit import st_autorefresh
 import numpy as np
 import pandas as pd
 import altair as alt
 import joblib
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
+import os
+import base64
+import json
 
 # Firestore integration (optional, skip if not installed)
 try:
@@ -23,42 +25,47 @@ st.set_page_config(page_title='HDP Longitudinal Predictor', layout='wide')
 # Firebase service setup
 firebase_service_account_path = Path('firebase-service-account.json')
 db = None
-if firebase_admin and firestore and firebase_service_account_path.exists():
-    cred = credentials.Certificate(str(firebase_service_account_path))
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
+firebase_initialized = False
 
+# Try to load Firebase credentials from file or environment variable (for Vercel)
+if firebase_admin and firestore:
+    # Check if already initialized to prevent multiple initialization
+    if not firebase_admin._apps:
+        cred_source = None
+        
+        if firebase_service_account_path.exists():
+            cred_source = str(firebase_service_account_path)
+        else:
+            # Try to load from environment variable (Vercel deployment)
+            firebase_cred_base64 = os.getenv('FIREBASE_SERVICE_ACCOUNT_BASE64')
+            if firebase_cred_base64:
+                try:
+                    firebase_cred_json = base64.b64decode(firebase_cred_base64).decode('utf-8')
+                    # Write temporarily to load
+                    firebase_service_account_path.write_text(firebase_cred_json)
+                    cred_source = str(firebase_service_account_path)
+                except Exception as e:
+                    st.warning(f'Failed to decode Firebase credentials from environment: {e}')
+        
+        if cred_source:
+            try:
+                cred = credentials.Certificate(cred_source)
+                firebase_admin.initialize_app(cred)
+                db = firestore.client()
+                firebase_initialized = True
+            except Exception as e:
+                db = None
+        else:
+            pass  # Silent - will show warning on dashboard
+    else:
+        # Already initialized
+        try:
+            db = firestore.client()
+            firebase_initialized = True
+        except Exception as e:
+            db = None
 
 PASSWORD = 'health123'
-
-DEFAULT_PATIENTS = [
-    {
-        'id': 'p001',
-        'name': 'Amina Adamu',
-        'dob': '1995-07-22',
-        'visits': [
-            {'label': 'Visit 1', 'date': '2026-01-10', 'sbp': 112, 'dbp': 72, 'risk': 0.17, 'notes': 'Normal monitoring.'},
-            {'label': 'Visit 2', 'date': '2026-02-12', 'sbp': 118, 'dbp': 78, 'risk': 0.28, 'notes': 'Raised BP, start diet.'}
-        ]
-    },
-    {
-        'id': 'p002',
-        'name': 'Bintu Kamara',
-        'dob': '1990-03-05',
-        'visits': [
-            {'label': 'Visit 1', 'date': '2026-01-20', 'sbp': 130, 'dbp': 84, 'risk': 0.43, 'notes': 'Pre-hypertension alert.'},
-            {'label': 'Visit 2', 'date': '2026-02-15', 'sbp': 136, 'dbp': 88, 'risk': 0.58, 'notes': 'Prescription started.'}
-        ]
-    },
-    {
-        'id': 'p003',
-        'name': 'Chiamaka Nwosu',
-        'dob': '1998-11-28',
-        'visits': [
-            {'label': 'Visit 1', 'date': '2026-01-05', 'sbp': 104, 'dbp': 66, 'risk': 0.08, 'notes': 'Healthy baseline.'}
-        ]
-    }
-]
 
 # Firestore persistence helpers
 
@@ -84,9 +91,132 @@ def save_patient_to_firestore(patient):
         visit_ref.set(visit_data, merge=True)
 
 
+def seed_demo_patients_to_firestore():
+    """Seed 10 demo patients to Firebase if collection is empty."""
+    if not db:
+        return
+    
+    # Check if patients collection already has data
+    if db.collection('patients').limit(1).stream().__next__():
+        return  # Already seeded
+    
+    demo_patients = [
+        {
+            'id': 'p001',
+            'name': 'Amina Adamu',
+            'dob': '1995-07-22',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-10', 'sbp': 112, 'dbp': 72, 'risk': 0.17, 'notes': 'Normal monitoring.'},
+                {'label': 'Visit 2', 'date': '2026-02-12', 'sbp': 118, 'dbp': 78, 'risk': 0.28, 'notes': 'Raised BP, start diet.'},
+                {'label': 'Visit 3', 'date': '2026-03-15', 'sbp': 114, 'dbp': 75, 'risk': 0.22, 'notes': 'Response to lifestyle changes.'}
+            ]
+        },
+        {
+            'id': 'p002',
+            'name': 'Bintu Kamara',
+            'dob': '1990-03-05',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-20', 'sbp': 130, 'dbp': 84, 'risk': 0.43, 'notes': 'Pre-hypertension alert.'},
+                {'label': 'Visit 2', 'date': '2026-02-15', 'sbp': 136, 'dbp': 88, 'risk': 0.58, 'notes': 'Prescription started.'},
+                {'label': 'Visit 3', 'date': '2026-03-20', 'sbp': 134, 'dbp': 86, 'risk': 0.52, 'notes': 'Medication compliance good.'},
+                {'label': 'Visit 4', 'date': '2026-04-05', 'sbp': 128, 'dbp': 82, 'risk': 0.46, 'notes': 'Improving trend.'}
+            ]
+        },
+        {
+            'id': 'p003',
+            'name': 'Chiamaka Nwosu',
+            'dob': '1998-11-28',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-05', 'sbp': 104, 'dbp': 66, 'risk': 0.08, 'notes': 'Healthy baseline.'},
+                {'label': 'Visit 2', 'date': '2026-02-20', 'sbp': 106, 'dbp': 68, 'risk': 0.10, 'notes': 'Stable vital signs.'},
+                {'label': 'Visit 3', 'date': '2026-03-25', 'sbp': 108, 'dbp': 70, 'risk': 0.12, 'notes': 'Continue monitoring.'}
+            ]
+        },
+        {
+            'id': 'p004',
+            'name': 'Zainab Hussein',
+            'dob': '1992-05-14',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-12', 'sbp': 125, 'dbp': 81, 'risk': 0.35, 'notes': 'Mild elevation.'},
+                {'label': 'Visit 2', 'date': '2026-02-08', 'sbp': 132, 'dbp': 85, 'risk': 0.45, 'notes': 'Increase in BP.'},
+                {'label': 'Visit 3', 'date': '2026-03-10', 'sbp': 138, 'dbp': 89, 'risk': 0.55, 'notes': 'Consider hospitalization.'},
+                {'label': 'Visit 4', 'date': '2026-04-01', 'sbp': 141, 'dbp': 91, 'risk': 0.62, 'notes': 'High risk monitoring.'},
+                {'label': 'Visit 5', 'date': '2026-04-12', 'sbp': 139, 'dbp': 90, 'risk': 0.59, 'notes': 'Weekly follow-up required.'}
+            ]
+        },
+        {
+            'id': 'p005',
+            'name': 'Fatima Okafor',
+            'dob': '1996-09-03',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-18', 'sbp': 110, 'dbp': 70, 'risk': 0.13, 'notes': 'Initial assessment.'},
+                {'label': 'Visit 2', 'date': '2026-02-25', 'sbp': 115, 'dbp': 73, 'risk': 0.19, 'notes': 'Slight increase monitoring.'},
+                {'label': 'Visit 3', 'date': '2026-03-30', 'sbp': 120, 'dbp': 76, 'risk': 0.27, 'notes': 'Preventive measures discussed.'}
+            ]
+        },
+        {
+            'id': 'p006',
+            'name': 'Aisha Mohammed',
+            'dob': '1994-12-11',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-15', 'sbp': 118, 'dbp': 75, 'risk': 0.22, 'notes': 'Borderline hypertension.'},
+                {'label': 'Visit 2', 'date': '2026-02-18', 'sbp': 124, 'dbp': 79, 'risk': 0.32, 'notes': 'Nutrition counseling.'},
+                {'label': 'Visit 3', 'date': '2026-03-28', 'sbp': 121, 'dbp': 77, 'risk': 0.29, 'notes': 'Stable after intervention.'},
+                {'label': 'Visit 4', 'date': '2026-04-10', 'sbp': 119, 'dbp': 76, 'risk': 0.25, 'notes': 'Good compliance.'}
+            ]
+        },
+        {
+            'id': 'p007',
+            'name': 'Leila Suleiman',
+            'dob': '1993-02-20',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-22', 'sbp': 106, 'dbp': 68, 'risk': 0.11, 'notes': 'Normal range.'},
+                {'label': 'Visit 2', 'date': '2026-02-26', 'sbp': 109, 'dbp': 71, 'risk': 0.14, 'notes': 'Routine monitoring.'},
+                {'label': 'Visit 3', 'date': '2026-04-02', 'sbp': 111, 'dbp': 72, 'risk': 0.16, 'notes': 'Progressing well.'}
+            ]
+        },
+        {
+            'id': 'p008',
+            'name': 'Grace Mensah',
+            'dob': '1991-06-07',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-01-28', 'sbp': 140, 'dbp': 92, 'risk': 0.65, 'notes': 'Severe hypertension.'},
+                {'label': 'Visit 2', 'date': '2026-02-22', 'sbp': 142, 'dbp': 94, 'risk': 0.68, 'notes': 'Treatment initiated.'},
+                {'label': 'Visit 3', 'date': '2026-03-18', 'sbp': 138, 'dbp': 90, 'risk': 0.61, 'notes': 'Medication adjustment.'},
+                {'label': 'Visit 4', 'date': '2026-04-08', 'sbp': 135, 'dbp': 88, 'risk': 0.56, 'notes': 'Improved response to therapy.'},
+                {'label': 'Visit 5', 'date': '2026-04-14', 'sbp': 133, 'dbp': 87, 'risk': 0.53, 'notes': 'Continue current regimen.'}
+            ]
+        },
+        {
+            'id': 'p009',
+            'name': 'Njeri Kamau',
+            'dob': '1997-08-16',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-02-01', 'sbp': 113, 'dbp': 73, 'risk': 0.19, 'notes': 'Early pregnancy assessment.'},
+                {'label': 'Visit 2', 'date': '2026-03-05', 'sbp': 127, 'dbp': 82, 'risk': 0.42, 'notes': 'BP elevation noted.'},
+                {'label': 'Visit 3', 'date': '2026-03-28', 'sbp': 132, 'dbp': 85, 'risk': 0.52, 'notes': 'Increased monitoring frequency.'},
+                {'label': 'Visit 4', 'date': '2026-04-11', 'sbp': 130, 'dbp': 84, 'risk': 0.48, 'notes': 'Stable with medication.'}
+            ]
+        },
+        {
+            'id': 'p010',
+            'name': 'Miriam Kipchoge',
+            'dob': '1989-10-30',
+            'visits': [
+                {'label': 'Visit 1', 'date': '2026-02-05', 'sbp': 108, 'dbp': 69, 'risk': 0.13, 'notes': 'Excellent baseline.'},
+                {'label': 'Visit 2', 'date': '2026-03-12', 'sbp': 112, 'dbp': 72, 'risk': 0.18, 'notes': 'Slight increase.'},
+                {'label': 'Visit 3', 'date': '2026-04-09', 'sbp': 115, 'dbp': 74, 'risk': 0.23, 'notes': 'Within acceptable range.'}
+            ]
+        }
+    ]
+    
+    for patient in demo_patients:
+        save_patient_to_firestore(patient)
+
+
 def load_patients_from_firestore():
     if not db:
-        return DEFAULT_PATIENTS
+        return []  # Return empty list - no hardcoded defaults
     patients = []
     for pdoc in db.collection('patients').stream():
         pdata = pdoc.to_dict()
@@ -110,20 +240,47 @@ def load_patients_from_firestore():
                 'risk': float(vdata.get('risk', 0.0)),
                 'notes': vdata.get('notes', '')
             })
+        # Sort visits by date
+        patient['visits'].sort(key=lambda x: x['date'])
         patients.append(patient)
     return patients
 
 
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
+
+# Seed demo patients on first run (only if Firebase initialized)
+if firebase_initialized and 'demo_seeded' not in st.session_state:
+    try:
+        seed_demo_patients_to_firestore()
+        st.session_state['demo_seeded'] = True
+    except Exception as e:
+        pass  # Silent fail
+
 if 'patients' not in st.session_state:
-    st.session_state['patients'] = load_patients_from_firestore() if db else DEFAULT_PATIENTS
+    st.session_state['patients'] = load_patients_from_firestore()
 if 'selected_patient' not in st.session_state:
     st.session_state['selected_patient'] = st.session_state['patients'][0]['id'] if st.session_state['patients'] else None
 if 'theme' not in st.session_state:
     st.session_state['theme'] = 'Dark'
 if 'enrollment_mode' not in st.session_state:
     st.session_state['enrollment_mode'] = False
+
+# Session timeout & activity tracking
+if 'last_activity' not in st.session_state:
+    st.session_state['last_activity'] = datetime.now()
+if 'session_timeout_warning' not in st.session_state:
+    st.session_state['session_timeout_warning'] = False
+if 'last_saved_visit' not in st.session_state:
+    st.session_state['last_saved_visit'] = None
+if 'unsaved_changes' not in st.session_state:
+    st.session_state['unsaved_changes'] = False
+if 'cached_prediction_key' not in st.session_state:
+    st.session_state['cached_prediction_key'] = None
+if 'cached_pred_risk' not in st.session_state:
+    st.session_state['cached_pred_risk'] = None
+if 'cached_pred_time' not in st.session_state:
+    st.session_state['cached_pred_time'] = None
 
 # Page navigation
 page = st.sidebar.selectbox("Navigate", ["Dashboard", "System Architecture"])
@@ -214,6 +371,9 @@ if page == "System Architecture":
     """)
 
 else:  # Dashboard page
+    
+    if not firebase_initialized:
+        st.error('⚠️ Firebase is not initialized. Patient data will not be persisted across sessions. Please ensure firebase-service-account.json is in the project root.')
 
     if not st.session_state['logged_in']:
         st.title('Pregnancy Hypertensive Disorder (HDP) Longitudinal Risk Explorer')
@@ -232,6 +392,33 @@ else:  # Dashboard page
 
     st.title('Longitudinal Risk Explorer')
 
+    # Session timeout check (60 minutes of inactivity)
+    if st.session_state['logged_in']:
+        now = datetime.now()
+        time_since_activity = (now - st.session_state['last_activity']).total_seconds()
+        
+        # Update activity on any action
+        st.session_state['last_activity'] = now
+        
+        # Check if timeout warning should show (after 59 minutes)
+        if time_since_activity > 3540 and not st.session_state['session_timeout_warning']:
+            st.warning('⏱️ **Session Timeout Warning**: You will be logged out in 60 seconds due to inactivity. Click anywhere to stay logged in.')
+            st.session_state['session_timeout_warning'] = True
+        
+        # Auto-logout after 60 minutes
+        if time_since_activity > 3600:
+            st.session_state['logged_in'] = False
+            st.error('❌ Session expired due to inactivity. Please log in again.')
+            st.stop()
+    
+    # Show "just saved" notification if recent save
+    if st.session_state['last_saved_visit']:
+        time_since_save = (datetime.now() - st.session_state['last_saved_visit']).total_seconds()
+        if time_since_save < 30:  # Show for 30 seconds after save
+            st.success(f'✅ Visit saved successfully! ({int(time_since_save)}s ago)')
+        elif time_since_save < 180:  # Show info for 3 minutes
+            st.info(f'💾 Last saved {int(time_since_save)}s ago. You may want to review it.')
+
     theme_choice = st.sidebar.radio('Theme:', ['Dark', 'Light'], index=0 if st.session_state['theme'] == 'Dark' else 1)
     if theme_choice != st.session_state['theme']:
         st.session_state['theme'] = theme_choice
@@ -243,25 +430,41 @@ else:  # Dashboard page
     .stSidebar {padding-top: 1rem !important; margin-top: 0 !important;}
     .css-1d391kg, .css-1v3fvcr, .css-hxt7ib, .css-18e3th9 {padding-top: 0 !important; margin-top: 0 !important;}
     .stSelectbox>div>div>div, .stTextInput>div>div>input {border-radius: 0.5rem !important;}
+    h1, h2, h3, h4, h5, h6 {font-weight: 600 !important;}
     </style>
     """, unsafe_allow_html=True)
 
     if st.session_state['theme'] == 'Dark':
         st.markdown("""
         <style>
-        body {background-color: #0E1117 !important; color: white !important;}
-        .stApp, .stSidebar, .block-container {background-color: #0E1117 !important; color: white !important;}
-        .stButton>button, .css-t3ipsp {background-color: #1a1f2e !important; color: white !important;}
-        .stTextInput>div>div>input, .stSelectbox>div>div>div>select {background-color: #1a1f2e !important; color: white !important;}
+        body {background-color: #0E1117 !important; color: #e6edf3 !important;}
+        .stApp, .stSidebar, .block-container {background-color: #0E1117 !important; color: #e6edf3 !important;}
+        .stMarkdown, .stText, p {color: #e6edf3 !important;}
+        h1, h2, h3, h4, h5, h6 {color: #f0f6fc !important;}
+        .stButton>button, .css-t3ipsp {background-color: #238636 !important; color: #ffffff !important; border: 1px solid #3d444d !important;}
+        .stButton>button:hover {background-color: #2ea043 !important;}
+        .stTextInput>div>div>input, .stSelectbox>div>div>div>select, .stNumberInput>div>div>input {background-color: #161b22 !important; color: #e6edf3 !important; border: 1px solid #30363d !important;}
+        .stSelectbox>div>div>div {background-color: #161b22 !important; color: #e6edf3 !important; border: 1px solid #30363d !important;}
+        .stMetric {background-color: #161b22 !important; padding: 1rem !important; border-radius: 0.5rem !important; border: 1px solid #30363d !important;}
+        .stMetric label {color: #8b949e !important;}
+        .metric-value {color: #79c0ff !important;}
         </style>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
         <style>
-        body {background-color: #f9fafb !important; color: #0f172a !important;}
-        .stApp, .stSidebar, .block-container {background-color: #f9fafb !important; color: #0f172a !important;}
-        .stButton>button, .css-t3ipsp {background-color: #d1d5db !important; color: #0f172a !important;}
-        .stTextInput>div>div>input, .stSelectbox>div>div>div>select {background-color: #ffffff !important; color: #0f172a !important;}
+        body {background-color: #ffffff !important; color: #1f2937 !important;}
+        .stApp, .stSidebar, .block-container {background-color: #f3f4f6 !important; color: #1f2937 !important;}
+        .stMarkdown, .stText, p {color: #374151 !important;}
+        h1, h2, h3, h4, h5, h6 {color: #1f2937 !important;}
+        .stButton>button, .css-t3ipsp {background-color: #3b82f6 !important; color: #ffffff !important; border: 1px solid #bfdbfe !important;}
+        .stButton>button:hover {background-color: #2563eb !important;}
+        .stTextInput>div>div>input, .stSelectbox>div>div>div>select, .stNumberInput>div>div>input {background-color: #ffffff !important; color: #1f2937 !important; border: 1px solid #d1d5db !important;}
+        .stSelectbox>div>div>div {background-color: #ffffff !important; color: #1f2937 !important; border: 1px solid #d1d5db !important;}
+        .stMetric {background-color: #ffffff !important; padding: 1rem !important; border-radius: 0.5rem !important; border: 1px solid #e5e7eb !important;}
+        .stMetric label {color: #6b7280 !important;}
+        .metric-value {color: #0ea5e9 !important;}
+        .stSubheader {color: #1f2937 !important;}
         </style>
         """, unsafe_allow_html=True)
 
@@ -269,67 +472,95 @@ else:  # Dashboard page
 
     with top_buttons_col1:
         if st.button('🆕 Enroll New Patient', use_container_width=True):
-            st.session_state['enrollment_mode'] = not st.session_state['enrollment_mode']
+            if st.session_state['unsaved_changes'] and st.session_state['enrollment_mode']:
+                st.warning('⚠️ You have unsaved changes. Are you sure you want to exit without saving?')
+            else:
+                st.session_state['enrollment_mode'] = not st.session_state['enrollment_mode']
+                st.session_state['unsaved_changes'] = False
 
     with top_buttons_col2:
         if st.button('👥 View Patients', use_container_width=True):
-            st.session_state['enrollment_mode'] = False
+            if st.session_state['unsaved_changes'] and st.session_state['enrollment_mode']:
+                st.warning('⚠️ You have unsaved changes in enrollment form. Are you sure you want to exit?')
+            else:
+                st.session_state['enrollment_mode'] = False
+                st.session_state['unsaved_changes'] = False
 
     if st.session_state['enrollment_mode']:
         st.markdown('---')
-        st.subheader('Enroll New Patient & Initial Visit')
+        st.subheader('✏️ Enroll New Patient & Initial Visit')
         
         enroll_left, enroll_right = st.columns([1, 2])
         
         with enroll_left:
             st.write('### Patient Information')
-            enroll_name = st.text_input('Full name', key='enroll_name')
-            enroll_dob = st.text_input('Date of birth (YYYY-MM-DD)', key='enroll_dob', placeholder='1990-03-15')
-            enroll_age = st.number_input('Age', min_value=15, max_value=50, value=28, key='enroll_age')
-            enroll_notes_patient = st.text_area('Patient history / notes', '', key='enroll_notes_patient', height=120)
+            enroll_name = st.text_input('Full name', key='enroll_name', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            enroll_dob = st.text_input('Date of birth (YYYY-MM-DD)', key='enroll_dob', placeholder='1990-03-15', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            enroll_age = st.number_input('Age', min_value=15, max_value=50, value=28, key='enroll_age', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            enroll_notes_patient = st.text_area('Patient history / notes', '', key='enroll_notes_patient', height=120, on_change=lambda: st.session_state.update({'unsaved_changes': True}))
         
         with enroll_right:
             st.write('### Initial Visit (Visit 1)')
-            visit_sbp = st.number_input('SBP', value=115, min_value=80, max_value=220, key='visit_sbp')
-            visit_dbp = st.number_input('DBP', value=75, min_value=50, max_value=150, key='visit_dbp')
-            visit_bmi = st.number_input('BMI', value=26.0, min_value=16.0, max_value=45.0, key='visit_bmi')
-            visit_notes = st.text_area('Clinician notes for this visit', '', key='visit_notes', height=120)
+            visit_sbp = st.number_input('SBP', value=115, min_value=80, max_value=220, key='visit_sbp', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            visit_dbp = st.number_input('DBP', value=75, min_value=50, max_value=150, key='visit_dbp', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            visit_bmi = st.number_input('BMI', value=26.0, min_value=16.0, max_value=45.0, key='visit_bmi', on_change=lambda: st.session_state.update({'unsaved_changes': True}))
+            visit_notes = st.text_area('Clinician notes for this visit', '', key='visit_notes', height=120, on_change=lambda: st.session_state.update({'unsaved_changes': True}))
             
-            if st.button('Predict & Review', use_container_width=True):
-                seq_len = 20
-                sbp_seq = np.linspace(visit_sbp - 12, visit_sbp, seq_len) + np.random.normal(0, 2, seq_len)
-                dbp_seq = np.linspace(visit_dbp - 8, visit_dbp, seq_len) + np.random.normal(0, 1.5, seq_len)
-                map_seq = 0.4 * sbp_seq + 0.6 * dbp_seq
-                bmi_seq = np.full(seq_len, visit_bmi) + np.linspace(0, 1.2, seq_len)
-                weight_seq = np.linspace(0, 2.0, seq_len)
-                oliguria = np.where(np.random.rand(seq_len) < 0.05, 1, 0)
-                proteinuria = np.where(np.random.rand(seq_len) < 0.03, 1, 0)
+            if st.button('🔍 Predict & Review', use_container_width=True):
+                st.session_state['unsaved_changes'] = True
                 
-                input_data = np.vstack([sbp_seq, dbp_seq, map_seq, bmi_seq, weight_seq, oliguria, proteinuria]).T
-                input_model = input_data.reshape(1, seq_len, 7)
+                # Create cache key from current inputs to avoid recalculating for same data
+                current_key = (visit_sbp, visit_dbp, visit_bmi)
                 
-                clf = joblib.load('artifacts/risk_classifier.pkl')
-                reg = joblib.load('artifacts/time_regressor.pkl')
-                mean_ = np.load('artifacts/risk_scaler_mean.npy')
-                scale_ = np.load('artifacts/risk_scaler_scale.npy')
-                scaler = StandardScaler()
-                scaler.mean_ = mean_
-                scaler.scale_ = scale_
-                scaler.var_ = scale_**2
-                scaler.n_features_in_ = 7
+                # Check if we already predicted for these exact values
+                if st.session_state['cached_prediction_key'] == current_key and st.session_state['cached_pred_risk'] is not None:
+                    # Reuse cached prediction
+                    pred_risk = st.session_state['cached_pred_risk']
+                    pred_time = st.session_state['cached_pred_time']
+                else:
+                    # Generate new prediction (only once per unique input set)
+                    np.random.seed(42)  # Fixed seed for reproducibility
+                    seq_len = 20
+                    sbp_seq = np.linspace(visit_sbp - 12, visit_sbp, seq_len) + np.random.normal(0, 2, seq_len)
+                    dbp_seq = np.linspace(visit_dbp - 8, visit_dbp, seq_len) + np.random.normal(0, 1.5, seq_len)
+                    map_seq = 0.4 * sbp_seq + 0.6 * dbp_seq
+                    bmi_seq = np.full(seq_len, visit_bmi) + np.linspace(0, 1.2, seq_len)
+                    weight_seq = np.linspace(0, 2.0, seq_len)
+                    oliguria = np.where(np.random.rand(seq_len) < 0.05, 1, 0)
+                    proteinuria = np.where(np.random.rand(seq_len) < 0.03, 1, 0)
+                    
+                    input_data = np.vstack([sbp_seq, dbp_seq, map_seq, bmi_seq, weight_seq, oliguria, proteinuria]).T
+                    input_model = input_data.reshape(1, seq_len, 7)
+                    
+                    clf = joblib.load('artifacts/risk_classifier.pkl')
+                    reg = joblib.load('artifacts/time_regressor.pkl')
+                    mean_ = np.load('artifacts/risk_scaler_mean.npy')
+                    scale_ = np.load('artifacts/risk_scaler_scale.npy')
+                    scaler = StandardScaler()
+                    scaler.mean_ = mean_
+                    scaler.scale_ = scale_
+                    scaler.var_ = scale_**2
+                    scaler.n_features_in_ = 7
+                    
+                    input_scaled = scaler.transform(input_model.reshape(-1, 7)).reshape(1, seq_len, 7)
+                    input_flat = input_scaled.reshape(1, -1)  # Flatten for sklearn
+                    pred_risk = clf.predict_proba(input_flat)[0, 1]  # Probability of positive class
+                    pred_time = reg.predict(input_flat)[0]
+                    
+                    # Cache the prediction results
+                    st.session_state['cached_prediction_key'] = current_key
+                    st.session_state['cached_pred_risk'] = pred_risk
+                    st.session_state['cached_pred_time'] = pred_time
                 
-                input_scaled = scaler.transform(input_model.reshape(-1, 7)).reshape(1, seq_len, 7)
-                input_flat = input_scaled.reshape(1, -1)  # Flatten for sklearn
-                pred_risk = clf.predict_proba(input_flat)[0, 1]  # Probability of positive class
-                pred_time = reg.predict(input_flat)[0]
-                
+                # Store predictions in session for display
                 st.session_state['pred_risk'] = pred_risk
                 st.session_state['pred_time'] = pred_time
         
         st.markdown('---')
         
         if 'pred_risk' in st.session_state:
-            st.write('### Prediction Result')
+            st.write('### 📊 Prediction Result')
+            st.info('💡 **Tip**: This prediction will remain consistent for these same input values. If you change SBP, DBP, or BMI, a new prediction will be generated.')
             col_risk, col_time = st.columns(2)
             with col_risk:
                 st.metric('HDP Risk', f"{st.session_state['pred_risk']*100:.1f}%")
@@ -337,7 +568,7 @@ else:  # Dashboard page
                 st.metric('Time to Event (weeks)', f"{st.session_state['pred_time']:.1f}")
             
             st.markdown('---')
-            st.write('### Confirm Patient Details')
+            st.write('### ✅ Confirm Patient Details')
             
             confirm_col_info, confirm_col_visit = st.columns([1, 1])
             with confirm_col_info:
@@ -377,15 +608,23 @@ else:  # Dashboard page
                         st.session_state['patients'].append(new_patient)
                         if db:
                             save_patient_to_firestore(new_patient)
-                        st.session_state['enrollment_mode'] = False
-                        st.success(f'✅ Patient {enroll_name} enrolled successfully!')
-                        # Streamlit reruns automatically on user actions, explicit rerun removed
+                            st.session_state['last_saved_visit'] = datetime.now()
+                            st.session_state['unsaved_changes'] = False
+                            st.success(f'✅ Patient {enroll_name} saved to Firebase successfully!')
+                            st.info('⏳ Refreshing data in 2 seconds...')
+                            import time
+                            time.sleep(2)
+                            st.session_state['patients'] = load_patients_from_firestore()
+                            st.session_state['enrollment_mode'] = False
+                        else:
+                            st.warning(f'⚠️ Patient {enroll_name} enrolled (local storage only)')
+                            st.session_state['enrollment_mode'] = False
             
             with save_col2:
                 if st.button('❌ Cancel', use_container_width=True):
                     st.session_state['enrollment_mode'] = False
+                    st.session_state['unsaved_changes'] = False
                     st.info('Enrollment cancelled.')
-                    # Streamlit reruns automatically on user actions, explicit rerun removed
 
     # Define dashboard layout columns before use
     layout_left, layout_main = st.columns([1, 2])
@@ -406,7 +645,12 @@ else:  # Dashboard page
 
             chosen_id = st.selectbox('Choose patient', patient_ids, index=current_index,
                                      format_func=lambda x: patient_names.get(x, x))
-            st.session_state['selected_patient'] = chosen_id
+            
+            if chosen_id != st.session_state['selected_patient']:
+                if st.session_state['unsaved_changes']:
+                    st.warning('⚠️ You have unsaved changes. You may want to save them before switching patients.')
+                st.session_state['selected_patient'] = chosen_id
+                st.session_state['unsaved_changes'] = False
         else:
             st.info('No patients match your search.')
 
@@ -467,26 +711,43 @@ else:  # Dashboard page
             'risk': v.get('risk', 0.0)
         } for i, v in enumerate(selected_patient.get('visits', []))])
 
+        # Chart colors based on theme
+        if st.session_state['theme'] == 'Dark':
+            sbp_color = '#79c0ff'
+            dbp_color = '#a5d6ff'
+            risk_color = '#f85149'
+            axis_color = '#8b949e'
+        else:
+            sbp_color = '#0ea5e9'
+            dbp_color = '#06b6d4'
+            risk_color = '#dc2626'
+            axis_color = '#6b7280'
+
         if st.session_state['carousel_page'] == 0:
-            st.markdown('### Diagnostics Trend (SBP/DBP)')
+            st.markdown('### 📊 Diagnostics Trend (SBP/DBP)')
             if not visits_df.empty:
-                chart = alt.Chart(visits_df.melt(id_vars=['visit'], value_vars=['sbp', 'dbp'], var_name='measurement', value_name='value')).mark_line(point=True).encode(
-                    x='visit',
-                    y='value',
-                    color='measurement',
-                    tooltip=['visit', 'measurement', 'value']
-                ).properties(width=600, height=300)
+                # Create base chart with both measurements
+                melt_df = visits_df.melt(id_vars=['visit'], value_vars=['sbp', 'dbp'], var_name='measurement', value_name='value')
+                
+                chart = alt.Chart(melt_df).mark_line(point=True, size=3, opacity=0.8).encode(
+                    x=alt.X('visit:N', title='Visit', axis=alt.Axis(labelColor=axis_color, titleColor=axis_color, domainColor=axis_color)),
+                    y=alt.Y('value:Q', title='Blood Pressure (mmHg)', axis=alt.Axis(labelColor=axis_color, titleColor=axis_color, domainColor=axis_color)),
+                    color=alt.Color('measurement:N', title='Measurement', legend=alt.Legend(titleColor=axis_color, labelColor=axis_color)),
+                    tooltip=['visit:N', 'measurement:N', alt.Tooltip('value:Q', format='.0f')]
+                ).properties(width=600, height=300).interactive()
+                
                 st.altair_chart(chart, use_container_width=True)
             else:
                 st.warning('No visit data yet for diagnostics trend.')
         else:
-            st.markdown('### Risk Trend')
+            st.markdown('### 📈 Risk Trend')
             if not visits_df.empty:
-                chart = alt.Chart(visits_df).mark_line(point=True, color='orange').encode(
-                    x='visit',
-                    y='risk',
-                    tooltip=['visit', alt.Tooltip('risk', format='.2f')]
-                ).properties(width=600, height=300)
+                chart = alt.Chart(visits_df).mark_line(point=True, size=3, color=risk_color, opacity=0.9).encode(
+                    x=alt.X('visit:N', title='Visit', axis=alt.Axis(labelColor=axis_color, titleColor=axis_color, domainColor=axis_color)),
+                    y=alt.Y('risk:Q', title='HDP Risk Score', axis=alt.Axis(labelColor=axis_color, titleColor=axis_color, domainColor=axis_color, format='.2%')),
+                    tooltip=['visit:N', alt.Tooltip('risk:Q', format='.2%')]
+                ).properties(width=600, height=300).interactive()
+                
                 st.altair_chart(chart, use_container_width=True)
             else:
                 st.warning('No visit data yet for risk trend.')
